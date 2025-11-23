@@ -16,7 +16,8 @@ git clone --depth=1 https://github.com/ophub/luci-app-amlogic package/amlogic
 git clone https://github.com/xiaorouji/openwrt-passwall2 package/luci-app-passwall2
 git clone https://github.com/sbwml/luci-app-openlist2 package/luci-app-openlist2
 #git_sparse_clone main https://github.com/morytyann/OpenWrt-mihomo luci-app-mihomo mihomo
-git clone https://github.com/kenzok8/small-package package/small-package 
+git clone https://github.com/kenzok8/small-package package/small-package
+git clone --depth 1 --single-branch https://github.com/breeze303/openwrt-podman package/openwrt-podman
 git clone https://github.com/xiaorouji/openwrt-passwall-packages package/passwall-packages 
 # sed -i '$a src-git smpackage https://github.com/kenzok8/small-package' feeds.conf.default
 # sed -i '$a src-git smpackage https://github.com/kenzok8/small-package' feeds.conf.default
