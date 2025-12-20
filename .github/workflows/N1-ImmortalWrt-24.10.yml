@@ -1,151 +1,141 @@
-name: N1-ImmortalWrt-24.10
+name: Build ImmortalWrt-24.10 for armsr_armv8
 
 on:
   workflow_dispatch:
-  repository_dispatch:
-    types:
-      - N1-ImmortalWrt-24.10
+   inputs:
+      ssh:
+        description: 'SSH connection to Actions'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - true
+          - false
+  schedule:
+    - cron: "0 0 1,16 * *"
 
 env:
+  GITHUB_TOKEN: ${{ secrets.GI_TOKEN }}
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: openwrt-24.10
   TZ: Asia/Shanghai
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
-    if: github.event.repository.owner.id == github.event.sender.id
+    runs-on: ubuntu-24.04
 
     steps:
-    - name: Show system
-      run: |
-        echo -e "💬 Server information \n"
-        echo -e "💻 Server running on Ubuntu: [ Release: $(cat /etc/os-release | grep VERSION_CODENAME | cut -d '=' -f2) / Host: $(arch) ] \n"
-        echo -e "🧮 Server CPU configuration information: \n$(cat /proc/cpuinfo | grep name | cut -f2 -d: | uniq -c) \n"
-        echo -e "💾 Server memory usage: \n$(free -h) \n"
-        echo -e "🗃️ Server space usag: \n$(df -hT ${GITHUB_WORKSPACE}) \n"
-
-    - name: Maximize build space
-      uses: easimon/maximize-build-space@master
-      with:
-        swap-size-mb: 1024
-        temp-reserve-mb: 512
-        root-reserve-mb: 4608
-        remove-dotnet: 'true'
-        remove-android: 'true'
-        remove-haskell: 'true'
-        remove-codeql: 'true'
-
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@main
 
-    - name: Init build dependencies
+    - name: Free up space
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: true
+        swap-storage: true
+
+    - name: Initialize environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        docker rmi $(docker images -q) 2>/dev/null
-        sudo -E apt-get -qq update
-        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache clang cmake cpio \
-          curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 \
-          libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev libreadline-dev \
-          libssl-dev libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip \
-          python3-ply python3-docutils python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs \
-          upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd jq
+        sudo -E apt-get -qq update -y
+        sudo -E apt-get -qq install -y \
+          ack antlr3 asciidoc autoconf automake autopoint binutils bison \
+          build-essential bzip2 ccache clang cmake cpio curl device-tree-compiler \
+          ecj fastjar flex gawk gettext gcc-multilib g++-multilib git gnutls-dev \
+          gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
+          libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev \
+          libncurses-dev libpython3-dev libreadline-dev libssl-dev libtool \
+          libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano ninja-build \
+          p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply \
+          python3-docutils python3-pyelftools qemu-utils re2c rsync scons \
+          squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim \
+          wget xmlto xxd zlib1g-dev zstd \
+          libfuse-dev fuse  # 新增关键依赖
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
-        sudo -E git config --global user.name 'GitHub Actions' && git config --global user.email 'noreply@github.com'
-        sudo -E git config --global core.abbrev auto
-        df -h
+        sudo -E apt-get -qq autoclean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+        ccache -M 10G # Limit ccache size
+        df -hT
 
-    - name: Prepare source code
+    - name: Clone source code
+      working-directory: /workdir
       run: |
-        sudo chown -R runner:runner /home/runner/work/build_openwrt
-        echo "build_date=$(date +%Y.%m.%d)" >> ${GITHUB_ENV}
-        latest_release="$(curl -s https://github.com/immortalwrt/immortalwrt/tags | grep -Eo "v[0-9\.]+-*r*c*[0-9]*.tar.gz" | sed -n '/24.10/p' | sed -n 1p | sed 's/.tar.gz//g' | sed 's/v//g')"
-        cp -r ./scripts/immortalwrt-24.10/. ./
-        ./01_prepare_source_code.sh "v${latest_release}"
-        mkdir -p /home/runner/work/build_openwrt/build_openwrt/amlogic
-        ln -sf /home/runner/work/build_openwrt/build_openwrt/openwrt /home/runner/work/_actions/ffuqiangg/amlogic-s9xxx-openwrt/main/openwrt
-        echo "latest_release=${latest_release}" >> ${GITHUB_ENV}
-        echo "kernel_version=$(cat openwrt/include/kernel-6.6 | grep -oE "[1-9]\.[1-9][0-9]*\.[1-9][0-9]*")" >> ${GITHUB_ENV}
+        git clone $REPO_URL -b $REPO_BRANCH --single-branch --depth=1 openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+        echo "FILE_DATE=$(date +"%Y%m%d")" >> $GITHUB_ENV
 
-    - name: Prepare package
-      working-directory: ${{ github.workspace }}/openwrt
+    - name: Update & Install feeds
       run: |
-        cp -r ../scripts/immortalwrt-24.10/. ./
-        ./02_prepare_package.sh "${{ env.latest_release }}"
-        echo -e "\n ImmortalWrt-${{ env.latest_release }} \033[33m|\033[0m ${{ env.build_date }}\n" > ./files/etc/banner
+        chmod +x armsr/armv8/diy/diy.sh
+        cd openwrt
+        ./scripts/feeds update -a
+        $GITHUB_WORKSPACE/armsr/armv8/diy/diy.sh
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+   
+    - name: Load N1 custom config
+      run: |
+        rm -rf openwrt/files openwrt/.config
+        mv armsr/armv8/N1/files armsr/armv8/N1/.config openwrt/
 
-    - name: Make config
-      working-directory: ${{ github.workspace }}/openwrt
-      run: |
-        cp ../config/immortalwrt-24.10/config.seed .config
-        make defconfig
+    - name: SSH connect to Actions
+      uses: P3TERX/ssh2actions@main
+      if: github.event.inputs.ssh == 'true'
 
     - name: Download package
-      working-directory: ${{ github.workspace }}/openwrt
+      working-directory: ./openwrt
       run: |
-        make download -j8
-        find dl -size -1024c -exec ls -l {} \;
-        find dl -size -1024c -exec rm -f {} \;
+        make defconfig
+        make download -j$(( $(nproc) * 2 ))
+        find dl -size -1k -exec rm -f {} \;
 
-    - name: Compile the firmware
-      working-directory: ${{ github.workspace }}/openwrt
+    - name: Compile N1 firmware
       run: |
-        make -j$(nproc) || make -j1 || make -j1 V=s
+        chmod -R 755 openwrt
+        cd openwrt
+        echo -e "$(nproc) thread compile"
+        make -j$(( $(nproc) + 1 )) || make -j1 V=s
 
-    - name: Upload firmware directory
-      uses: actions/upload-artifact@main
-      with:
-        name: OpenWrt_rootfs_${{ env.build_date }}
-        path: openwrt/bin
-
-    - name: Packit firmware
-      uses: ffuqiangg/amlogic-s9xxx-openwrt@main
-      with:
-        openwrt_path: openwrt/bin/targets/*/*/*rootfs.tar.gz
-        openwrt_board: s905d
-        kernel_repo: ffuqiangg/kernel_6.6.y
-        openwrt_kernel: ${{ env.kernel_version }}
-        kernel_usage: stable
-        auto_kernel: false
-        openwrt_size: 820
-        build_date: ${{ env.build_date }}
-
-    - name: Organize files
-      run: |
-        if [[ "${{ github.event_name }}" == 'repository_dispatch' ]]; then
-          echo "prerelease_symbol=false" >> ${GITHUB_ENV}
-          sed -i '1,/cutline/d' ./doc/release.md
-        else
-          echo "prerelease_symbol=true" >> ${GITHUB_ENV}
-          sed -i '/cutline/,$d' ./doc/release.md
-        fi
-        rm -rf ./artifact/
-        mkdir -p ./artifact/
-        cp ${{ env.PACKAGED_OUTPUTPATH }}/*.img.gz ./artifact/
-        cd ./artifact/
-        zip N1-ImmortalWrt-${{ env.latest_release }}-${{ env.build_date }}.zip *.img.gz
-        rm -rf /home/runner/work/build_openwrt/build_openwrt/amlogic
+    - name: Package N1 firmware
+      uses: unifreq/openwrt_packit@master
+      env:
+        OPENWRT_ARMVIRT: openwrt/bin/targets/armsr/armv8/*rootfs.tar.gz
+        KERNEL_REPO_URL: breakingbadboy/OpenWrt
+        KERNEL_VERSION_NAME: 6.6.y_6.12.y
+        PACKAGE_SOC: diy
+        GZIP_IMGS: .xz
+        SCRIPT_DIY_PATH: armsr/armv8/N1/mk_s905d_n1.sh
+        WHOAMI: nantayo
+        SW_FLOWOFFLOAD: 0
+        SFE_FLOW: 0
 
     - name: Upload firmware to release
-      uses: ncipollo/release-action@main
+      uses: softprops/action-gh-release@master
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GI_TOKEN }}
       with:
-        tag: ${{ env.build_date }}
-        allowUpdates: true
-        replacesArtifacts: true
-        prerelease: ${{ env.prerelease_symbol }}
-        artifacts: ./artifact/*.zip
-        bodyFile: ./doc/release.md
+        tag_name: OpenWrt_${{ env.FILE_DATE }}
+        files: ${{ env.PACKAGED_OUTPUTPATH }}/*.img.xz
+        body: |
+          首次使用建议全新刷写
+          * 基本信息
+          IP: 192.168.2.2
+          账户: root
+          密码: password
 
-    - name: telegram notification
-      if: github.event_name == 'repository_dispatch'
-      run: |
-        firmware_num="$(curl -fsSL https://github.com/ffuqiangg/build_openwrt/releases/expanded_assets/${{ env.build_date }} | grep -oE "N1-.*.zip" | sort -u | wc -l)"
-        MSG="
-        *${{ env.build_date }}* 固件编译完成
-        https://github.com/ffuqiangg/build\_openwrt/releases/tag/${{ env.build_date }}
-        "
-        if [[ "${firmware_num}" == 7 ]]; then
-          curl "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" -d "chat_id=${{ secrets.TELEGRAM_TO }}&text=${MSG}&parse_mode=MarkDown&disable_web_page_preview=false"
-        fi
+    - name: Delete old releases
+      uses: dev-drprasad/delete-older-releases@master
+      env:
+          GITHUB_TOKEN: ${{ secrets.GI_TOKEN }}
+      with:
+        keep_latest: 2
+        delete_tags : true
